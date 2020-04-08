@@ -3,7 +3,7 @@
 #
 import asyncio
 from asyncio import transports
-
+from collections import deque
 
 class ServerProtocol(asyncio.Protocol):
     login: str = None
@@ -20,14 +20,28 @@ class ServerProtocol(asyncio.Protocol):
 
         if self.login is not None:
             self.send_message(decoded)
+            self.server.history.append(f"{self.login}: {decoded}\r\n")
+            for _ in range(10, len(self.server.history)) :
+                self.server.history.popleft()
         else:
             if decoded.startswith("login:"):
                 self.login = decoded.replace("login:", "").replace("\r\n", "")
-                self.transport.write(
-                    f"Привет, {self.login}!\n".encode()
-                )
+                login_counter = 0
+                for user in self.server.clients :
+                    if self.login == user.login :
+                        login_counter += 1
+                if login_counter > 1 :
+                    self.transport.write("Такой логин уже зарегистрирован\r\n".encode())
+                    self.transport.close()
+                else :
+                    self.transport.write(f"Привет, {self.login}!\r\n".encode())
+                    self.send_history()
             else:
-                self.transport.write("Неправильный логин\n".encode())
+                self.transport.write("Неправильный логин\r\n".encode())
+
+    def send_history(self):
+        for i in range(len(self.server.history)) :
+            self.transport.write(self.server.history[i].encode())
 
     def connection_made(self, transport: transports.Transport):
         self.server.clients.append(self)
@@ -39,7 +53,7 @@ class ServerProtocol(asyncio.Protocol):
         print("Клиент вышел")
 
     def send_message(self, content: str):
-        message = f"{self.login}: {content}\n"
+        message = f"{self.login}: {content}\r\n"
 
         for user in self.server.clients:
             user.transport.write(message.encode())
@@ -47,9 +61,11 @@ class ServerProtocol(asyncio.Protocol):
 
 class Server:
     clients: list
+    history: list
 
     def __init__(self):
         self.clients = []
+        self.history = deque()
 
     def build_protocol(self):
         return ServerProtocol(self)
